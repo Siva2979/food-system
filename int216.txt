@@ -1,0 +1,120 @@
+import numpy as np  
+import pandas as pd  
+import matplotlib.pyplot as plt
+import seaborn as sns
+from ast import literal_eval
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import linear_kernel
+import warnings
+warnings.filterwarnings("ignore")
+import os
+for dirname, _, filenames in os.walk('/kaggle/input'):
+    for filename in filenames:
+        print(os.path.join(dirname, filename))
+        a = pd.read_csv("RAW_interactions.csv")
+a.head(2)
+b = pd.read_csv("RAW_recipes.csv")
+b.head(3)
+a.shape , b.shape
+a = a.sample(50000)
+b = b.sample(50000)
+data = pd.merge(a,b, right_on='id',left_on='recipe_id')
+data.shape
+data.head(2)
+data.drop(["user_id","submitted","contributor_id","id"],axis=1,inplace=True)
+data.describe()
+data[['calories','total fat','sugar','sodium','protein','saturated fat','carbohydrates']] = data.nutrition.str.split(",",expand=True) 
+data['calories'] = data['calories'].apply(lambda x: x.replace("[" ,""))
+data['carbohydrates'] = data['carbohydrates'].apply(lambda x: x.replace("]" ,""))
+data[['calories','total fat','sugar','sodium','protein','saturated fat','carbohydrates']] =  data[['calories','total fat','sugar','sodium','protein','saturated fat','carbohydrates']].astype(float)
+fig,ax = plt.subplots(1,2,figsize=(15,4))
+sns.distplot(data["minutes"],ax=ax[0])
+sns.distplot(data["n_steps"],ax=ax[1])
+fig,ax = plt.subplots(1,2,figsize=(15,4))
+sns.boxplot(data=data["minutes"],ax=ax[0])
+sns.boxplot(data=data["n_steps"],ax=ax[1])
+q1 = np.percentile(data["minutes"],25)
+q3 = np.percentile(data["minutes"],75)
+IQR = q3- q1
+upper = q3 + 1.5*IQR
+lower = q1 - 1.5*IQR
+
+data = data.drop((data[data["minutes"]>=upper].index | data[data["minutes"]<=lower].index),axis=0)
+q1 = np.percentile(data["n_steps"],25)
+q3 = np.percentile(data["n_steps"],75)
+IQR = q3- q1
+upper = q3 + 1.5*IQR
+lower = q1 - 1.5*IQR
+
+data = data.drop((data[data["n_steps"]>=upper].index | data[data["n_steps"]<=lower].index),axis=0)
+plt.figure(figsize=(14,6))
+sns.heatmap(data.corr(),annot=True)
+fig,ax = plt.subplots(1,2,figsize=(15,4))
+sns.scatterplot(data=data,x="n_steps",y="minutes" ,hue="rating",ax=ax[0])
+sns.scatterplot(data=data,x="n_ingredients",y="minutes" ,hue="rating",ax=ax[1])
+fig,ax = plt.subplots(1,2,figsize=(15,4))
+sns.scatterplot(data=data,x="total fat",y="calories" ,hue="rating",ax=ax[0])
+sns.scatterplot(data=data,x="carbohydrates",y="sugar" ,hue="rating",ax=ax[1])
+fig,ax = plt.subplots(1,3,figsize=(18,4))
+sns.barplot(data=data,y="rating",x="n_ingredients",ax=ax[0])
+sns.barplot(data=data,y="rating",x="n_steps",ax=ax[1])
+sns.barplot(data=data,y="n_ingredients",x="n_steps",ax=ax[2])
+data.isnull().sum()
+data.dropna(inplace=True)
+nonveg_ingred = ["egg","egg whites",]
+def ingredient_check(data):
+    veg = 0 
+    for a in literal_eval(data):
+        if a in nonveg_ingred:
+            veg = 1
+        else:
+            veg = 0
+    return veg
+data["non veg"] = data["ingredients"].apply(ingredient_check)
+data.columns
+data["non veg"].value_counts()
+rec = data[["recipe_id","rating","name","tags","description","ingredients",]]
+rate = rec.groupby("name")["rating"].sum().reset_index()
+import nltk
+rec.duplicated().sum()
+rec.drop_duplicates(inplace=True)
+rec.reset_index(drop=True,inplace=True)
+rec.head(2)
+import string
+
+def convert_to_list(data):
+    a = data.replace("-","").replace("[","").replace("]","")
+#     a = ''.join([i for i in a if not i.isdigit()])
+    a = a.translate(str.maketrans('', '', string.punctuation))
+    return a
+rec["tags"] = rec["tags"].apply(lambda x: convert_to_list(x))
+rec["ingredients"] = rec["ingredients"].apply(lambda x: convert_to_list(x))
+rec["description"] = rec["description"].apply(lambda x: convert_to_list(x))
+rec["rec"] = rec["tags"] + rec["description"] + rec["ingredients"]
+rec = rec[~rec.duplicated("name")]
+rec.reset_index(drop=True,inplace=True)
+rec.to_csv("food.csv")
+cv = TfidfVectorizer()
+rec_tfidf = cv.fit_transform(rec["rec"])
+name_tfidf = cv.fit_transform(rec["name"])
+rec_consin_sim = linear_kernel(rec_tfidf,rec_tfidf)
+name_consin_sim = linear_kernel(name_tfidf,name_tfidf)
+indices = pd.Series(rec.index,index=rec['name'])
+def recommendation(data,sim):
+    re_li = []
+    df = pd.DataFrame([])
+    ind = indices[data]
+#     ind = rec[rec["name"]==data].index[0]
+    sim_score = list(enumerate(sim[ind]))
+    sim_score = sorted(sim_score,key=lambda x:x[1],reverse=True)
+    sim_score = sim_score[0:10]
+    rec_indices = [i[0] for i in sim_score]
+    for i in rec_indices:
+        re_li.append(rec.iloc[i]["name"])
+        
+    return re_li
+
+# recommendation("potatoes oh  brian")
+# Recommendation based on name
+
+recommendation(rec[:1]["name"][0],name_consin_sim)
